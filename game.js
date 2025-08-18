@@ -516,125 +516,103 @@ class GameManager {
     fireBeam(dir) {
         if (this.state !== 'AWAITING_INPUT') return;
         const result = PhysicsEngine.castRay(this.emitter.pos, dir, this.reflectors, this.target);
-        this.beamPath        if (hitTarget && (!intersection || hitTarget.dist < intersection.dist)) {
-            beamPath.push(hitTarget.point);
-            console.log("HIT!");
-            // In a real game, you'd trigger a success state here
-            return;
+        this.beamPath = result.path;
+        this.beamDidHit = result.didHitTarget;
+        this.beamAnimationProgress = 0;
+        this.state = 'BEAM_FIRING';
+    }
+    
+    endGame() {
+        this.state = 'GAME_OVER';
+        if (this.score > this.highScore) {
+            this.highScore = this.score;
+            this.isNewHighScore = true;
+            localStorage.setItem('raytrace_highscore', this.highScore.toString());
         }
+    }
 
-        if (intersection) {
-            beamPath.push(intersection.point);
-            
-            // Calculate reflection
-            const segmentVec = { x: reflector.x2 - reflector.x1, y: reflector.y2 - reflector.y1 };
-            // The normal is perpendicular to the segment
-            let normal = { x: -segmentVec.y, y: segmentVec.x };
-            // Normalize the normal
-            const len = Math.sqrt(normal.x * normal.x + normal.y * normal.y);
-            normal.x /= len;
-            normal.y /= len;
+    pause() { this.isPaused = true; }
+    resume() { this.isPaused = false; this.lastTime = performance.now(); }
 
-            const dot = 2 * (currentDir.x * normal.x + currentDir.y * normal.y);
-            
-            currentDir = {
-                x: currentDir.x - dot * normal.x,
-                y: currentDir.y - dot * normal.y
-            };
-            currentPos = intersection.point;
-        } else {
-            // No intersection, beam goes off-screen
-            beamPath.push({
-                x: currentPos.x + currentDir.x * 2000,
-                y: currentPos.y + currentDir.y * 2000
-            });
-            return;
+    gameLoop(timestamp) {
+        const deltaTime = (timestamp - this.lastTime) / 1000;
+        this.lastTime = timestamp;
+
+        if (!this.isPaused) {
+            this.update(deltaTime);
+        }
+        
+        const entities = { emitter: this.emitter, target: this.target, reflectors: this.reflectors };
+        this.renderer.draw(this, entities);
+        
+        requestAnimationFrame(this.gameLoop.bind(this));
+    }
+
+    update(dt) {
+        switch (this.state) {
+            case 'LEVEL_STARTING':
+                this.transitionAlpha -= dt * 2;
+                if (this.transitionAlpha <= 0) {
+                    this.transitionAlpha = 0;
+                    const levelData = LevelGenerator.generate(this.level);
+                    this.emitter = levelData.emitter;
+                    this.target = levelData.target;
+                    this.reflectors = levelData.reflectors;
+                    this.state = 'AWAITING_INPUT';
+                }
+                break;
+
+            case 'AWAITING_INPUT':
+                this.timer -= dt;
+                if (this.timer <= 0) {
+                    this.timer = 0;
+                    this.endGame();
+                }
+                break;
+                
+            case 'BEAM_FIRING':
+                this.beamAnimationProgress += dt * 3; // Animation speed
+                if (this.beamAnimationProgress >= 1) {
+                    this.beamAnimationProgress = 1;
+                    if (this.beamDidHit) {
+                        this.state = 'ROUND_COMPLETE';
+                        this.transitionAlpha = 0;
+                        
+                        const timeLeft = Math.ceil(this.timer);
+                        let roundPoints = 0;
+                        if (timeLeft >= TIMER_START_SECONDS - 10) roundPoints = Math.pow(timeLeft, 3);
+                        else if (timeLeft >= TIMER_START_SECONDS - 30) roundPoints = Math.pow(timeLeft, 2);
+                        else roundPoints = timeLeft;
+                        this.score += Math.floor(roundPoints);
+
+                        this.hitEffect.active = true;
+                        this.hitEffect.pos = this.beamPath[this.beamPath.length - 1];
+                        this.hitEffect.radius = 0;
+                        this.hitEffect.alpha = 1;
+
+                    } else {
+                        setTimeout(() => {
+                            this.beamPath = null;
+                            if (this.state !== 'GAME_OVER') {
+                                this.state = 'AWAITING_INPUT';
+                            }
+                        }, 500); // Linger time for missed shot
+                    }
+                }
+                break;
+
+            case 'ROUND_COMPLETE':
+                this.transitionAlpha += dt * 1.5;
+                if (this.transitionAlpha >= 1) {
+                    this.nextLevel();
+                }
+                // Update hit effect
+                if (this.hitEffect.active) {
+                    this.hitEffect.radius += dt * 200;
+                    this.hitEffect.alpha -= dt * 2;
+                    if (this.hitEffect.alpha <= 0) this.hitEffect.active = false;
+                }
+                break;
         }
     }
 }
-
-// Ray-Segment Intersection function
-function getIntersection(rayOrigin, rayDir, segment) {
-    const v1 = { x: rayOrigin.x - segment.x1, y: rayOrigin.y - segment.y1 };
-    const v2 = { x: segment.x2 - segment.x1, y: segment.y2 - segment.y1 };
-    const v3 = { x: -rayDir.y, y: rayDir.x };
-
-    const dot = v2.x * v3.x + v2.y * v3.y;
-    if (Math.abs(dot) < 0.000001) return null; // Parallel lines
-
-    const t1 = (v2.x * v1.y - v2.y * v1.x) / dot;
-    const t2 = (v1.x * v3.x + v1.y * v3.y) / dot;
-
-    if (t1 >= 0 && (t2 >= 0 && t2 <= 1)) {
-        return {
-            point: { x: rayOrigin.x + t1 * rayDir.x, y: rayOrigin.y + t1 * rayDir.y },
-            dist: t1
-        };
-    }
-    return null;
-}
-
-// Check for hit on target
-function checkTargetHit(rayOrigin, rayDir, rect) {
-    const lines = [
-        { x1: rect.x, y1: rect.y, x2: rect.x + rect.width, y2: rect.y },
-        { x1: rect.x + rect.width, y1: rect.y, x2: rect.x + rect.width, y2: rect.y + rect.height },
-        { x1: rect.x + rect.width, y1: rect.y + rect.height, x2: rect.x, y2: rect.y + rect.height },
-        { x1: rect.x, y1: rect.y + rect.height, x2: rect.x, y2: rect.y }
-    ];
-    let closestHit = null;
-    for (const line of lines) {
-        const hit = getIntersection(rayOrigin, rayDir, line);
-        if (hit && (!closestHit || hit.dist < closestHit.dist)) {
-            closestHit = hit;
-        }
-    }
-    return closestHit;
-}
-
-
-// --- 5. RENDERER ---
-function gameLoop() {
-    // Clear the canvas with a dark gradient
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, '#1c2541');
-    gradient.addColorStop(1, '#0b132b');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Draw emitter
-    ctx.fillStyle = '#6fffe9';
-    ctx.beginPath();
-    ctx.arc(emitter.x, emitter.y, emitter.radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Draw target
-    ctx.fillStyle = '#ff4d6d';
-    ctx.fillRect(target.x, target.y, target.width, target.height);
-
-    // Draw reflector
-    ctx.strokeStyle = '#80ffdb';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(reflector.x1, reflector.y1);
-    ctx.lineTo(reflector.x2, reflector.y2);
-    ctx.stroke();
-
-    // Draw beam path
-    if (beamPath.length > 1) {
-        ctx.strokeStyle = '#fca311';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(beamPath[0].x, beamPath[0].y);
-        for (let i = 1; i < beamPath.length; i++) {
-            ctx.lineTo(beamPath[i].x, beamPath[i].y);
-        }
-        ctx.stroke();
-    }
-
-    // Keep the loop going
-    requestAnimationFrame(gameLoop);
-}
-
-// Start the game loop
-gameLoop();
