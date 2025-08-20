@@ -1,13 +1,51 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>RayTrace</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <title>RayTrace (Web)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #14161C;
+      color: #EBF0FA;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    canvas {
+      width: min(96vmin, 1000px);
+      height: min(96vmin, 1000px);
+      background: #14161C;
+      border-radius: 10px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+      touch-action: none; /* prevent touch scrolling while dragging */
+    }
+    .footer {
+      position: fixed;
+      left: 0; right: 0; bottom: 6px;
+      text-align: center;
+      color: #9AA2B2;
+      font-size: 12px;
+      user-select: none;
+      opacity: 0.75;
+    }
+    a { color: #B6C1D9; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
-    <script src="game.js"></script>
+  <div id="wrap">
+    <canvas id="game" width="1000" height="1000"></canvas>
+  </div>
+  <div class="footer">RayTrace (Web) • Drag to aim, release to fire</div>
+  <script type="module" src="./raytrace.js"></script>
 </body>
 </html>
