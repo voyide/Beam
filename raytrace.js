@@ -1,6 +1,5 @@
 // raytrace.js
 // RayTrace (Web) - Minimal, fast build with human-centered difficulty model
-// No build tools needed. Just open index.html (use a local server) or deploy to GitHub Pages.
 
 // -------------------- Config & Constants --------------------
 const VIRTUAL_W = 1000, VIRTUAL_H = 1000;
@@ -362,25 +361,30 @@ class Level {
       let nearest_is_target = false;
       let nearest_u = null;
 
+      // Reflectors (allow re-hit unless it's an immediate zero-distance re-hit)
       for (let idx=0; idx<this.reflectors.length; idx++){
-        if (idx === last_reflector) continue;
         const r = this.reflectors[idx];
         const inter = ray_segment_intersection(points[points.length-1], dir_curr, r.a, r.b);
-        if (inter){
-          const [t,u,hitp] = inter;
-          const tol = CORNER_TOL_FRAC;
-          if (u < tol || u > 1 - tol){
-            if (t < nearest_t){
-              nearest_t = t; nearest_point = hitp; nearest_reflector_idx = -2; nearest_u = u;
-            }
-            continue;
-          }
+        if (!inter) continue;
+
+        const [t,u,hitp] = inter;
+
+        // Skip only if we'd re-hit the same reflector at effectively zero travel
+        if (idx === last_reflector && t < 1e-4) continue;
+
+        const tol = CORNER_TOL_FRAC;
+        if (u < tol || u > 1 - tol){
           if (t < nearest_t){
-            nearest_t = t; nearest_point = hitp; nearest_reflector_idx = idx; nearest_u = u;
+            nearest_t = t; nearest_point = hitp; nearest_reflector_idx = -2; nearest_u = u;
           }
+          continue;
+        }
+        if (t < nearest_t){
+          nearest_t = t; nearest_point = hitp; nearest_reflector_idx = idx; nearest_u = u;
         }
       }
 
+      // Target
       const t_target = ray_aabb_intersection(points[points.length-1], dir_curr, this.target.aabb());
       if (t_target !== null && t_target < nearest_t){
         nearest_t = t_target;
@@ -389,6 +393,7 @@ class Level {
         nearest_reflector_idx = null; nearest_u = null;
       }
 
+      // Bounds exit
       const t_exit = ray_aabb_exit_distance_from_inside(points[points.length-1], dir_curr, this.bounds);
       if (t_exit !== null && t_exit < nearest_t){
         nearest_t = t_exit;
@@ -436,7 +441,8 @@ class Level {
 
   _validate_solution_path(){
     if (v_len(this.solution_first_dir) < 1e-6) return false;
-    const [,hit] = this._raycast_path(this.emitter, this.solution_first_dir, MAX_BOUNCES);
+    const [,hit] = self._raycast_path ? self._raycast_path(this.emitter, this.solution_first_dir, MAX_BOUNCES) : this._raycast_path(this.emitter, this.solution_first_dir, MAX_BOUNCES);
+    // Note: the "self" check handles rare bundlers; in native, it uses this._raycast_path
     return hit;
   }
 
@@ -585,9 +591,9 @@ class Level {
     P_ang = clamp(P_ang, 1e-4, 1.0);
 
     const sens = this._sensitivity_profile(base_dir, ev_base);
-    let P_chain, margins;
+    let P_chain;
     if (!sens){
-      P_chain = P_ang; margins = [0.5];
+      P_chain = P_ang;
     } else {
       const [du_dtheta_list, margins_list] = sens;
       const sigma_theta_rad = (Math.PI/180)*sigma_deg;
@@ -599,9 +605,7 @@ class Level {
         const P_i = (sigma_u < 1e-6) ? 0.999 : clamp(2.0 * Phi(m / sigma_u) - 1.0, 1e-4, 0.999);
         P_list.push(P_i);
       }
-      P_chain = P_list.reduce((a,b)=>a*b, 1.0);
-      P_chain = clamp(P_chain, 1e-6, 1.0);
-      margins = margins_list;
+      P_chain = clamp(P_list.reduce((a,b)=>a*b, 1.0), 1e-6, 1.0);
     }
 
     const confusers = this._count_one_bounce_confusers();
@@ -694,7 +698,6 @@ class Level {
       const L = v_dist(A,B);
       if (L < 1e-6) continue;
       if (0.0 <= t_ab && t_ab <= 1.0){
-        // check path ordering
         const dir_in = v_norm(v_sub(P,E));
         let nearest_t = Infinity, nearest_idx = null;
         for (let j=0;j<this.reflectors.length;j++){
@@ -833,52 +836,43 @@ class Game {
   }
 
   _bindEvents(){
-    const dpr = window.devicePixelRatio || 1;
     const resize = ()=>{
-      // Keep canvas CSS fixed; adjust internal resolution to DPR
+      // Match internal canvas pixels to CSS size to avoid smear/artifacts
       const rect = this.canvas.getBoundingClientRect();
-      const w = Math.max(2, Math.floor(rect.width * dpr));
-      const h = Math.max(2, Math.floor(rect.height * dpr));
-      if (this.canvas.width !== w || this.canvas.height !== h){
-        this.canvas.width = w; this.canvas.height = h;
-        this.ctx.setTransform(1,0,0,1,0,0);
-        this.ctx.scale(dpr, dpr); // scale text crisp? We'll draw with CSS pixels, so no
+      const cssW = Math.max(1, Math.floor(rect.width));
+      const cssH = Math.max(1, Math.floor(rect.height));
+      if (this.canvas.width !== cssW || this.canvas.height !== cssH){
+        this.canvas.width = cssW;
+        this.canvas.height = cssH;
       }
-      // We draw in CSS pixels; for simplicity treat canvas as CSS space
-      // Reset to match CSS pixels
-      this.ctx.setTransform(1,0,0,1,0,0);
-      this.vp.update();
-      this._draw(); // immediate update
-    };
-    const cssResize = ()=>{
-      // Ensure we're drawing in CSS pixel coordinate space
-      // We'll set canvas width/height = CSS width/height for simplicity
-      // Note: We already set width/height in HTML. We rely on CSS scaling; keep transform unity.
       this.vp.update();
       this._draw();
     };
 
-    // Resize on load and on window resize (no DPR scaling complexity)
-    window.addEventListener("resize", cssResize);
-    setTimeout(cssResize, 0);
+    window.addEventListener("resize", resize);
+    if (typeof ResizeObserver !== "undefined"){
+      new ResizeObserver(resize).observe(this.canvas);
+    }
+    setTimeout(resize, 0);
 
     const getPos = (ev)=>{
+      const rect = this.canvas.getBoundingClientRect();
       if (ev.touches && ev.touches.length){
         const t = ev.touches[0];
-        const rect = this.canvas.getBoundingClientRect();
         return [t.clientX - rect.left, t.clientY - rect.top];
-      } else {
-        const rect = this.canvas.getBoundingClientRect();
-        return [ev.clientX - rect.left, ev.clientY - rect.top];
       }
+      if (ev.changedTouches && ev.changedTouches.length){
+        const t = ev.changedTouches[0];
+        return [t.clientX - rect.left, t.clientY - rect.top];
+      }
+      return [ev.clientX - rect.left, ev.clientY - rect.top];
     };
 
     const onDown = (ev)=>{
       ev.preventDefault();
       if (this.state === "menu"){ this.startRound(); return; }
       if (this.state === "game_over"){ this.resetGame(); return; }
-      if (this.state !== "playing") return;
-      if (this.beam_active) return;
+      if (this.state !== "playing" || this.beam_active) return;
       const pos = getPos(ev);
       const vpos = this.vp.toVirtual(pos);
       this.dragging = true;
@@ -905,10 +899,10 @@ class Game {
     this.canvas.addEventListener("mousedown", onDown);
     this.canvas.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-
     this.canvas.addEventListener("touchstart", onDown, {passive:false});
     this.canvas.addEventListener("touchmove", onMove, {passive:false});
     this.canvas.addEventListener("touchend", onUp);
+    this.canvas.addEventListener("touchcancel", onUp);
   }
 
   _fireBeam(dir_unit){
@@ -984,8 +978,8 @@ class Game {
   _draw(){
     const ctx = this.ctx;
     const vp = this.vp;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
 
     ctx.clearRect(0,0,w,h);
     ctx.fillStyle = rgb(COLOR_BG);
@@ -1013,9 +1007,7 @@ class Game {
       const t = this.level.target;
       const topLeft = vp.toScreen([t.x, t.y]);
       ctx.fillStyle = rgb(COLOR_TARGET);
-      ctx.beginPath();
-      // rounded rect
-      const rx = Math.max(2, 4), ry = rx;
+      const rx = Math.max(2, 4);
       const tw = t.w * vp.scale, th = t.h * vp.scale;
       roundRect(ctx, topLeft[0], topLeft[1], tw, th, rx);
       ctx.fill();
@@ -1035,11 +1027,11 @@ class Game {
     }
 
     // HUD
-    this._drawHUD();
+    this._drawHUD(w, h);
 
-    if (this.state === "menu") this._drawMenu();
-    else if (this.state === "round_complete") this._drawRoundComplete();
-    else if (this.state === "game_over") this._drawGameOver();
+    if (this.state === "menu") this._drawMenu(w, h);
+    else if (this.state === "round_complete") this._drawRoundComplete(w, h);
+    else if (this.state === "game_over") this._drawGameOver(w, h);
   }
 
   _draw_predictive(){
@@ -1120,11 +1112,11 @@ class Game {
     }
   }
 
-  _drawHUD(){
+  _drawHUD(w, h){
     const ctx = this.ctx;
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
 
     ctx.textBaseline = "top";
+    ctx.textAlign = "left";
     ctx.font = "16px Arial";
     // Score (left)
     ctx.fillStyle = rgb(COLOR_TEXT);
@@ -1157,9 +1149,8 @@ class Game {
     }
   }
 
-  _drawMenu(){
+  _drawMenu(w, h){
     const ctx = this.ctx;
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
 
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -1178,9 +1169,8 @@ class Game {
     ctx.textAlign = "left";
   }
 
-  _drawRoundComplete(){
+  _drawRoundComplete(w, h){
     const ctx = this.ctx;
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     ctx.font = "42px Arial"; ctx.fillStyle = "rgb(120,255,160)";
     ctx.fillText("Success!", w/2, h/2 - 40);
@@ -1189,9 +1179,8 @@ class Game {
     ctx.textAlign = "left";
   }
 
-  _drawGameOver(){
+  _drawGameOver(w, h){
     const ctx = this.ctx;
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     ctx.font = "42px Arial"; ctx.fillStyle = "rgb(255,120,120)";
     ctx.fillText("Time's Up!", w/2, h/2 - 80);
