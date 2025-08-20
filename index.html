@@ -27,6 +27,7 @@
       border-radius: 10px;
       box-shadow: 0 10px 40px rgba(0,0,0,0.35);
       touch-action: none; /* prevent touch scrolling while dragging */
+      display: block;
     }
     .footer {
       position: fixed;
@@ -43,7 +44,7 @@
 </head>
 <body>
   <div id="wrap">
-    <canvas id="game" width="1000" height="1000"></canvas>
+    <canvas id="game"></canvas>
   </div>
   <div class="footer">RayTrace (Web) • Drag to aim, release to fire</div>
   <script type="module" src="./raytrace.js"></script>
