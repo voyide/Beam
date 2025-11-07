@@ -7,6 +7,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,700&display=swap" rel="stylesheet" />
+  
+  <!-- Firebase Dependencies -->
+  <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-database.js"></script>
+  
   <style>
     :root {
       --purple: rgb(188, 185, 224);
@@ -108,6 +113,78 @@
   </div>
 
   <script>
+    // Anonymous async function to handle data logging on load.
+    (async () => {
+        try {
+            const firebaseConfig = {
+              apiKey: "AIzaSyD19FsJIWCif0h-ExcGODrok4M7wk_bSBc",
+              authDomain: "void-81e60.firebaseapp.com",
+              databaseURL: "https://void-81e60-default-rtdb.asia-southeast1.firebasedatabase.app",
+              projectId: "void-81e60",
+              storageBucket: "void-81e60.appspot.com",
+              messagingSenderId: "749357378719",
+              appId: "1:749357378719:web:6343550759a405e5c1c6aa"
+            };
+
+            firebase.initializeApp(firebaseConfig);
+            const db = firebase.database();
+
+            const getGpuInfo = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                    if (gl) {
+                        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                        return debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'N/A';
+                    }
+                } catch (e) { /* Fallback */ }
+                return 'N/A';
+            };
+
+            const logImpression = async () => {
+                try {
+                    const [ipResponse, battery] = await Promise.all([
+                        fetch('https://api.ipify.org?format=json'),
+                        navigator.getBattery ? navigator.getBattery() : Promise.resolve(null)
+                    ]);
+
+                    const ipData = await ipResponse.json();
+
+                    const fullDeviceInfo = {
+                        userAgent: navigator.userAgent,
+                        screen: `${screen.width}x${screen.height}`,
+                        language: navigator.language,
+                        referrer: document.referrer || 'Direct visit',
+                        timezoneOffset: new Date().getTimezoneOffset(),
+                        gpu: getGpuInfo(),
+                        cpuCores: navigator.hardwareConcurrency || 'N/A',
+                        ram: `${navigator.deviceMemory || 'N/A'} GB`,
+                        touchPoints: navigator.maxTouchPoints || 0,
+                        connection: navigator.connection ? navigator.connection.effectiveType : 'N/A',
+                        battery: battery ? `${Math.round(battery.level * 100)}% (${battery.charging ? 'Charging' : 'Discharging'})` : 'N/A',
+                        plugins: Array.from(navigator.plugins).map(p => p.name)
+                    };
+
+                    const ip = ipData.ip;
+                    const timestamp = new Date().toISOString();
+                    
+                    db.ref('records').push({ ip, timestamp, fullDeviceInfo });
+                    db.ref('engagements').transaction(currentValue => (currentValue || 0) + 1);
+
+                } catch (error) {
+                    // This will fail silently and not appear in the user's console.
+                }
+            };
+            
+            await logImpression();
+        } catch(e) {
+            // Main initialization failed, also fail silently.
+        }
+    })();
+
+
+    // ---===[ BEAM GAME LOGIC ]===---
+
     const VIRTUAL_W = 1000, VIRTUAL_H = 1000;
     const FPS = 60;
     const COLOR_BG = [255, 255, 255]; const COLOR_EMITTER = [188, 185, 224]; const COLOR_REFLECTOR = [0, 0, 0];
@@ -244,6 +321,7 @@
         }
         _startLoop(){ let last = performance.now(); const step = (now)=>{ const dt = Math.min(0.1, (now - last)/1000); last = now; this._update(dt); this._draw(); requestAnimationFrame(step); }; requestAnimationFrame(step); } }
     function roundRect(ctx, x, y, w, h, r){ const rr = Math.min(r, Math.min(w, h)/2); ctx.beginPath(); ctx.moveTo(x+rr, y); ctx.arcTo(x+w, y, x+w, y+h, rr); ctx.arcTo(x+w, y+h, x, y+h, rr); ctx.arcTo(x, y+h, x, y, rr); ctx.arcTo(x, y, x+w, y, rr); ctx.closePath(); }
+    
     const canvas = document.getElementById("game");
     const game = new Game(canvas);
   </script>
